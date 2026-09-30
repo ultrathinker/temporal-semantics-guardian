@@ -6,5 +6,7 @@
   "author": {
     "name": "ultrathinker"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": "https://github.com/ultrathinker/temporal-semantics-guardian",
+  "homepage": "https://github.com/ultrathinker/temporal-semantics-guardian"
 }

@@ -8,5 +8,8 @@
   },
   "license": "MIT",
   "repository": "https://github.com/ultrathinker/temporal-semantics-guardian",
-  "homepage": "https://github.com/ultrathinker/temporal-semantics-guardian"
+  "homepage": "https://github.com/ultrathinker/temporal-semantics-guardian",
+  "documentationUrl": "https://github.com/ultrathinker/temporal-semantics-guardian#readme",
+  "supportUrl": "https://github.com/ultrathinker/temporal-semantics-guardian/issues",
+  "privacyPolicyUrl": "https://github.com/ultrathinker/temporal-semantics-guardian/blob/main/PRIVACY.md"
 }

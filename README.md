@@ -157,6 +157,12 @@ The scanner is line-oriented and can miss multiline abstractions, interpolated J
 f-string expressions, receiver names that do not expose temporal tokens, uncalled datetime references beyond the
 simple forms it knows, and third-party date libraries.
 
+## Privacy
+
+The scanner only reads source files and prints a report: it writes nothing and makes no network requests, and the
+plugin itself sends nothing anywhere. Claude handles what it reads inside your own Claude Code session. Privacy:
+`PRIVACY.md`. Security reports: `SECURITY.md`.
+
 ## License
 
 MIT. See LICENSE.

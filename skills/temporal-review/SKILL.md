@@ -31,9 +31,10 @@ implementation plan unless the user explicitly authorizes edits.
    python "${CLAUDE_PLUGIN_ROOT}/scripts/temporal_scan.py" --root . --format json
    ~~~
 
-   If the environment exposes Python as python3, use that executable. Pass a narrower path when the user gave one.
-   If no Python interpreter is available, say so and continue with a clearly labeled model-only review. The scanner is
-   read-only and has no third-party dependencies.
+   If the environment exposes Python as python3, use that executable. Pass a narrower path as a positional argument
+   when the user gave one. The scanner defaults to 25 displayed findings; use the summary and truncation warning
+   before narrowing or rerunning with a larger cap. If no Python interpreter is available, say so and continue with a
+   clearly labeled model-only review. The scanner is read-only and has no third-party dependencies.
 
 4. Build a semantic inventory.
 
@@ -68,8 +69,9 @@ implementation plan unless the user explicitly authorizes edits.
 
    Check whether tests exercise at least two relevant IANA zones and both daylight-saving transition shapes where
    applicable: a skipped local time during spring forward and a repeated local time during fall back. Also check
-   date-only values near UTC midnight and an explicit-offset instant. Prefer assertions about meaning and chosen
-   policy over assertions that merely match the host machine's local zone.
+   date-only values near UTC midnight and an explicit-offset instant. Useful 2026 transition dates are March 8 and
+   November 1 in America/New_York, and March 29 and October 25 in Europe/Budapest. Prefer assertions about meaning
+   and chosen policy over assertions that merely match the host machine's local zone.
 
 7. Report only actionable evidence.
 
@@ -95,3 +97,8 @@ implementation plan unless the user explicitly authorizes edits.
 - Preserve the repository's terminology and existing temporal helpers.
 - Do not recommend storing a local wall-clock time as an instant unless the product has a documented zone policy.
 - Do not recommend converting every value to UTC as a substitute for modeling calendar dates and recurring schedules.
+
+Useful review prompts beyond the scanner include local-midnight mutation such as setHours(0, 0, 0, 0),
+getTimezoneOffset(), JSON serialization of dates, date.today(), astimezone() without an explicit zone, and the
+difference between Postgres timestamp and timestamptz or MySQL DATETIME and TIMESTAMP. Do not turn these prompts into
+automatic findings without evidence from the repository.

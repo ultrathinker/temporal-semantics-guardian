@@ -34,7 +34,7 @@ implementation plan unless the user explicitly authorizes edits.
    If the environment exposes Python as python3, use that executable. Pass a narrower path as a positional argument
    when the user gave one. The scanner defaults to 25 displayed findings; use the summary and truncation warning
    before narrowing or rerunning with a larger cap. If no Python interpreter is available, say so and continue with a
-   clearly labeled model-only review. The scanner is read-only and has no third-party dependencies.
+   clearly labeled scanner-free review. The scanner is read-only and has no third-party dependencies.
 
 4. Build a semantic inventory.
 

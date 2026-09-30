@@ -10,7 +10,7 @@ APIs, database models, queues, schedulers, billing code, dashboards, and user-fa
 
 ## What it does
 
-The /temporal-semantics-guardian:temporal-review command:
+The /temporal-semantics-guardian:temporal-check command:
 
 1. Establishes the requested review scope and looks for repository guidance.
 2. Runs the bundled dependency-free scanner over source files.
@@ -34,13 +34,13 @@ claude --plugin-dir /path/to/temporal-semantics-guardian
 Then run:
 
 ~~~text
-/temporal-semantics-guardian:temporal-review
+/temporal-semantics-guardian:temporal-check
 ~~~
 
 You can add a narrower scope in the command prompt, such as src/billing or services/reminders. The command is
-read-only by instruction; normal Claude Code permissions still apply. It may inspect source and test files and run
-the bundled scanner, but the scanner does not edit, format, install packages, call a network service, or send data
-anywhere.
+read-only by instruction; normal Claude Code permissions still apply. It pre-approves only the bundled scanner
+invocation and may inspect source and test files, but the scanner does not edit, format, install packages, call a
+network service, or send data anywhere.
 
 The deterministic scanner can also be run directly from the repository you want to scan:
 
@@ -50,7 +50,7 @@ python /path/to/temporal-semantics-guardian/scripts/temporal_scan.py --root . --
 ~~~
 
 The scanner requires Python 3.9 or newer and uses only the standard library. Use python3 when that is the name of
-the local interpreter. If Python is not available, the skill continues with a clearly labeled model-only review.
+the local interpreter. If Python is not available, the skill continues with a clearly labeled scanner-free review.
 The scanner exits successfully by default so it can be used as an advisory check; --fail-on warning or --fail-on
 error can make findings fail a local CI command. It shows at most 25 findings by default, puts the complete counts
 in the summary, and reports truncation; use --max-findings 0 for no output cap or --list-files to include the full
@@ -65,16 +65,16 @@ The scanner reports stable rule IDs so teams can discuss and suppress a known, r
 - JS003: UTC ISO output sliced to make a calendar date.
 - JS004: date/time locale formatting that may use the runtime timezone.
 - JS005: fixed 24-hour millisecond arithmetic near date/time code.
-- PY001: naive datetime.now().
+- PY001: naive datetime.now() or datetime.today().
 - PY002: datetime.utcnow(), which returns a naive UTC value.
 - PY003: datetime.fromtimestamp() without a timezone argument.
 - PY004: datetime.utcfromtimestamp(), which returns a naive UTC value.
 - PY005: direct pytz timezone assignment through tzinfo=.
-- PY006: attaching a timezone through replace(tzinfo=...).
+- PY006: changing timezone metadata through replace(tzinfo=...).
 - PY007: adding or subtracting a one-day or 24-hour timedelta where calendar arithmetic may be intended.
 
-Findings include a production or test context. Production findings are shown first; test fixtures remain visible so
-they cannot hide coverage gaps.
+Findings include a production or test context. Production findings are shown first within each severity; test
+fixtures remain visible so they cannot hide coverage gaps.
 
 The scanner is deliberately pattern-based. It does not attempt to understand every date library or prove the
 business meaning of a field. Claude's review should confirm the finding against call sites, schemas, contracts, and
@@ -149,11 +149,13 @@ and state whether the application chooses the earlier, later, or rejected interp
 dates include America/New_York on March 8 and November 1, and Europe/Budapest on March 29 and October 25.
 
 The scanner reads only these extensions: .cjs, .cts, .js, .jsx, .mjs, .mts, .py, .ts, and .tsx. It skips common
-dependency and generated directories, including .git, node_modules, dist, build, coverage, .venv, venv, env,
-site-packages, .next, .nuxt, .turbo, .cache, .eggs, and __pypackages__. Files over 1 MB and individual lines over
-2,000 characters are skipped with warnings.
-The scanner is line-oriented and can miss multiline abstractions, aliases outside simple datetime imports, and
-third-party date libraries.
+dependency and generated directories, including .git, node_modules, dist, build, out, vendor, coverage, .venv,
+venv, env, site-packages, .next, .nuxt, .turbo, .cache, .eggs, .mypy_cache, .pytest_cache, .tox, __pycache__,
+and __pypackages__. Files over 1 MB, individual lines over 2,000 characters, and unusually long or unclosed calls
+are skipped with warnings or bounded as appropriate.
+The scanner is line-oriented and can miss multiline abstractions, interpolated JavaScript template and Python
+f-string expressions, receiver names that do not expose temporal tokens, uncalled datetime references beyond the
+simple forms it knows, and third-party date libraries.
 
 ## License
 

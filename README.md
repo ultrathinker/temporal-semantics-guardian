@@ -150,8 +150,8 @@ dates include America/New_York on March 8 and November 1, and Europe/Budapest on
 
 The scanner reads only these extensions: .cjs, .cts, .js, .jsx, .mjs, .mts, .py, .ts, and .tsx. It skips common
 dependency and generated directories, including .git, node_modules, dist, build, coverage, .venv, venv, env,
-site-packages, .next, .nuxt, .turbo, and __pypackages__. Files over 1 MB and individual lines over 2,000 characters
-are skipped with warnings.
+site-packages, .next, .nuxt, .turbo, .cache, .eggs, and __pypackages__. Files over 1 MB and individual lines over
+2,000 characters are skipped with warnings.
 The scanner is line-oriented and can miss multiline abstractions, aliases outside simple datetime imports, and
 third-party date libraries.
 

@@ -37,6 +37,8 @@ SOURCE_EXTENSIONS = {
 }
 EXCLUDED_DIRS = {
     ".git",
+    ".cache",
+    ".eggs",
     ".hg",
     ".mypy_cache",
     ".pytest_cache",

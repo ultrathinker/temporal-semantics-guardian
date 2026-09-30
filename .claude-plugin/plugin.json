@@ -1,0 +1,10 @@
+{
+  "name": "temporal-semantics-guardian",
+  "displayName": "Temporal Semantics Guardian",
+  "version": "0.1.0",
+  "description": "Review JavaScript, TypeScript, and Python code for ambiguous date and time semantics, timezone boundary bugs, and daylight-saving unsafe arithmetic.",
+  "author": {
+    "name": "Temporal Semantics Guardian Contributors"
+  },
+  "license": "MIT"
+}

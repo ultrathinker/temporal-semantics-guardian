@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 
-SCANNER_VERSION = "0.2.0"
+SCANNER_VERSION = "0.3.0"
 DEFAULT_MAX_FILE_BYTES = 1_000_000
 DEFAULT_MAX_FINDINGS = 25
 MAX_LINE_CHARS = 2_000
@@ -132,7 +132,7 @@ RULES: Dict[str, Dict[str, str]] = {
     "PY001": {
         "severity": "warning",
         "confidence": "high",
-        "message": "datetime.now() creates a naive datetime.",
+        "message": "datetime.now() or datetime.today() creates a naive datetime.",
         "rationale": (
             "A naive value does not carry the zone needed to interpret it consistently "
             "when it crosses a process, storage, or API boundary."
@@ -195,14 +195,14 @@ RULES: Dict[str, Dict[str, str]] = {
     "PY006": {
         "severity": "info",
         "confidence": "medium",
-        "message": "A timezone is attached with replace(tzinfo=...).",
+        "message": "replace(tzinfo=...) rewrites timezone metadata without conversion.",
         "rationale": (
-            "replace changes the label without resolving whether the wall time is "
-            "valid or ambiguous in that zone."
+            "replace changes or removes the timezone label without converting the "
+            "wall-clock fields or resolving whether the local time is valid or ambiguous."
         ),
         "suggestion": (
             "Use a zone-aware construction or an explicit policy for skipped and "
-            "repeated local times; keep replace only for a proven relabeling."
+            "repeated local times; keep replace only for a proven relabeling or removal."
         ),
     },
     "PY007": {
@@ -242,7 +242,7 @@ JS_INTL_FORMAT = re.compile(
     r"""\bIntl\.DateTimeFormat\s*\("""
 )
 JS_FIXED_DAY_PRODUCT = re.compile(
-    r"""(?<![\w.])\d[\d_]*(?:\s*\*\s*\d[\d_]*){2,}(?![\w.])"""
+    r"""(?<![\w.])\d[\d_]*(?:\s*\*\s*\d[\d_]*){1,}(?![\w.])"""
 )
 JS_FIXED_DAY_LITERAL = re.compile(
     r"""(?<![\w.])86_?400_?000(?![\w.])"""
@@ -256,22 +256,33 @@ JS_DATE_OPTION = re.compile(
     re.IGNORECASE,
 )
 JS_TIMEZONE_OPTION = re.compile(
-    r"""(?:"timeZone"|'timeZone'|\btimeZone)\s*:""",
+    r"""(?:"timeZone"|'timeZone'|\btimeZone\b)""",
     re.IGNORECASE,
 )
-JS_DATE_LIKE_RECEIVER = re.compile(
-    r"""(?:date|time|created|updated|due|expiry|expires|scheduled|timestamp|instant|start|end|deadline)""",
-    re.IGNORECASE,
-)
+JS_TEMPORAL_RECEIVER_TOKENS = {
+    "created",
+    "date",
+    "deadline",
+    "expires",
+    "expiry",
+    "instant",
+    "scheduled",
+    "time",
+    "timestamp",
+    "updated",
+}
 
 PY_DATETIME_METHOD = re.compile(
-    r"""\b(?P<receiver>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\.(?P<method>now|utcnow|fromtimestamp|utcfromtimestamp)\s*\("""
+    r"""\b(?P<receiver>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\.(?P<method>now|today|utcnow|fromtimestamp|utcfromtimestamp)\s*\("""
 )
 PY_DATETIME_IMPORT = re.compile(
-    r"""\bfrom\s+datetime\s+import\s+datetime(?:\s+as\s+(?P<alias>[A-Za-z_]\w*))?\b"""
+    r"""\bfrom\s+datetime\s+import\s+(?P<imports>[^\n]+)"""
 )
 PY_DATETIME_MODULE_IMPORT = re.compile(
     r"""\bimport\s+datetime(?:\s+as\s+(?P<alias>[A-Za-z_]\w*))?\b"""
+)
+PY_DATETIME_REFERENCE = re.compile(
+    r"""\b(?P<receiver>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\.(?P<method>now|today|utcnow|utcfromtimestamp)\b(?!\s*\()"""
 )
 PY_PYTZ_ASSIGNMENT = re.compile(
     r"""\btzinfo\s*=\s*pytz\.timezone\s*\("""
@@ -282,6 +293,8 @@ PY_REPLACE_CALL = re.compile(
 PY_FIXED_DAY = re.compile(
     r"""(?:\+|\-)\s*timedelta\s*\(\s*(?:days\s*=\s*1(?![\d.])|hours\s*=\s*24(?![\d.])|seconds\s*=\s*86400(?![\d.]))"""
 )
+MAX_CALL_SCAN_CHARS = 2_000
+MAX_CALL_SCAN_LINES = 50
 
 
 @dataclass(frozen=True)
@@ -406,6 +419,8 @@ def _mask_source(text: str, language: str) -> str:
         start = index
         index += delimiter_length
         while index < length:
+            if not triple and quote != chr(96) and text[index] in "\r\n":
+                break
             if text[index] == "\\" and not triple:
                 index += 2
                 continue
@@ -451,8 +466,14 @@ def _balanced_call(
     masked: str, opening_position: int
 ) -> Optional[Tuple[int, str]]:
     depth = 0
-    for position in range(opening_position, len(masked)):
+    line_count = 0
+    end_position = min(len(masked), opening_position + MAX_CALL_SCAN_CHARS + 1)
+    for position in range(opening_position, end_position):
         character = masked[position]
+        if character == "\n":
+            line_count += 1
+            if line_count > MAX_CALL_SCAN_LINES:
+                return None
         if character == "(":
             depth += 1
         elif character == ")":
@@ -490,7 +511,14 @@ def _has_second_positional_argument(masked_arguments: str) -> bool:
 def _python_datetime_receivers(masked: str) -> set:
     receivers = {"datetime", "datetime.datetime"}
     for match in PY_DATETIME_IMPORT.finditer(masked):
-        receivers.add(match.group("alias") or "datetime")
+        for imported in match.group("imports").split(","):
+            parts = imported.strip().split()
+            if not parts or parts[0] != "datetime":
+                continue
+            if len(parts) == 3 and parts[1] == "as":
+                receivers.add(parts[2])
+            else:
+                receivers.add("datetime")
     for match in PY_DATETIME_MODULE_IMPORT.finditer(masked):
         alias = match.group("alias") or "datetime"
         receivers.add(alias + ".datetime")
@@ -513,7 +541,12 @@ def _js_locale_is_temporal(
     if method in {"toLocaleDateString", "toLocaleTimeString"}:
         return True
     receiver = match.group("receiver") or ""
-    if JS_DATE_LIKE_RECEIVER.search(receiver):
+    normalized_receiver = re.sub(r"([a-z])([A-Z])", r"\1 \2", receiver)
+    normalized_receiver = normalized_receiver.replace("_", " ")
+    receiver_tokens = {
+        token.lower() for token in re.findall(r"[A-Za-z]+", normalized_receiver)
+    }
+    if receiver_tokens.intersection(JS_TEMPORAL_RECEIVER_TOKENS):
         return True
     if JS_DATE_OPTION.search(masked_arguments):
         return True
@@ -533,6 +566,9 @@ def _js_product_is_day(expression: str) -> bool:
 
 def _js_temporal_context(line: str) -> bool:
     normalized = re.sub(r"([a-z])([A-Z])", r"\1 \2", line)
+    normalized = re.sub(r"([A-Za-z])([0-9])", r"\1 \2", normalized)
+    normalized = re.sub(r"([0-9])([A-Za-z])", r"\1 \2", normalized)
+    normalized = normalized.replace("_", " ")
     return bool(JS_TEMPORAL_CONTEXT.search(normalized))
 
 
@@ -556,7 +592,7 @@ def scan_text(text: str, path: str) -> List[Finding]:
 
     scan_text_source = _mask_long_lines(text)
     masked = _mask_long_lines(_mask_source(text, language))
-    lines = text.splitlines()
+    lines = text.split("\n")
     starts = _line_starts(text)
     findings: List[Finding] = []
     if language == "javascript":
@@ -603,11 +639,18 @@ def scan_text(text: str, path: str) -> List[Finding]:
             )
 
         for match in JS_INTL_FORMAT.finditer(masked):
-            call = _call_arguments(text, masked, match.end() - 1)
-            if call is None:
+            balanced = _balanced_call(masked, match.end() - 1)
+            if balanced is None:
                 continue
-            raw_arguments, masked_arguments = call
+            closing_position, masked_arguments = balanced
+            raw_arguments = text[match.end() : closing_position]
             if _js_locale_has_timezone(raw_arguments, masked_arguments):
+                continue
+            if re.match(
+                r"\s*\.\s*resolvedOptions\s*\(\s*\)\s*\.\s*timeZone\b",
+                masked[closing_position + 1 :],
+                re.IGNORECASE,
+            ):
                 continue
             line_number = _line_number(match.start(), starts)
             findings.append(
@@ -652,7 +695,7 @@ def scan_text(text: str, path: str) -> List[Finding]:
             method = match.group("method")
             line_number = _line_number(match.start(), starts)
             line = _line_text(lines, line_number)
-            if method == "now" and not masked_arguments.strip():
+            if method in {"now", "today"} and not masked_arguments.strip():
                 findings.append(_make_finding("PY001", language, path, line_number, line))
             elif method == "utcnow":
                 findings.append(_make_finding("PY002", language, path, line_number, line))
@@ -663,6 +706,20 @@ def scan_text(text: str, path: str) -> List[Finding]:
                     findings.append(_make_finding("PY003", language, path, line_number, line))
             elif method == "utcfromtimestamp":
                 findings.append(_make_finding("PY004", language, path, line_number, line))
+
+        for match in PY_DATETIME_REFERENCE.finditer(masked):
+            if match.group("receiver") not in receivers:
+                continue
+            method = match.group("method")
+            line_number = _line_number(match.start(), starts)
+            line = _line_text(lines, line_number)
+            rule = {
+                "now": "PY001",
+                "today": "PY001",
+                "utcnow": "PY002",
+                "utcfromtimestamp": "PY004",
+            }[method]
+            findings.append(_make_finding(rule, language, path, line_number, line))
 
         for match in PY_PYTZ_ASSIGNMENT.finditer(masked):
             line_number = _line_number(match.start(), starts)
@@ -882,10 +939,20 @@ def load_config(root: Path, config_path: Optional[str]) -> Tuple[List[IgnoreRule
         if not candidate.is_file():
             raise FileNotFoundError("Config file does not exist: {}".format(config_path))
 
-    data_text = candidate.read_text(encoding="utf-8-sig")
+    try:
+        data_text = candidate.read_text(encoding="utf-8-sig")
+    except UnicodeError as exc:
+        raise ValueError(
+            "Config file {} must be UTF-8 JSON: {}".format(candidate, exc)
+        ) from exc
     if data_text.startswith("\ufeff"):
         data_text = data_text[1:]
-    data = json.loads(data_text)
+    try:
+        data = json.loads(data_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "Config file {} is not valid JSON: {}".format(candidate, exc)
+        ) from exc
     if not isinstance(data, dict):
         raise ValueError("The temporal guardian config must contain a JSON object.")
     relative = candidate.relative_to(root).as_posix()
@@ -968,6 +1035,12 @@ def scan(
         for rule in sorted(RULES)
         if any(finding.rule == rule for finding in active)
     }
+    excluded_paths = sorted(set(excluded_directories))
+    excluded_counts: Dict[str, int] = {}
+    for excluded_path in excluded_paths:
+        directory_name = Path(excluded_path).name or excluded_path
+        excluded_counts[directory_name] = excluded_counts.get(directory_name, 0) + 1
+    excluded_counts = dict(sorted(excluded_counts.items()))
     warnings: List[str] = []
     if not scanned_files:
         warnings.append(
@@ -989,10 +1062,18 @@ def scan(
                 len(skipped)
             )
         )
-    if excluded_directories:
+    meaningful_excluded_counts = {
+        name: count
+        for name, count in excluded_counts.items()
+        if name not in {".git", "__pycache__"}
+    }
+    if meaningful_excluded_counts:
         warnings.append(
             "Excluded directories were not scanned: {}.".format(
-                ", ".join(sorted(set(excluded_directories)))
+                ", ".join(
+                    "{} x{}".format(name, count)
+                    for name, count in meaningful_excluded_counts.items()
+                )
             )
         )
     if long_lines:
@@ -1008,21 +1089,22 @@ def scan(
         "summary": {
             "files_scanned": len(scanned_files),
             "files_skipped": len(skipped),
-            "excluded_directories": len(set(excluded_directories)),
+            "excluded_directories": len(excluded_paths),
             "total_findings": total_findings,
             "displayed_findings": len(displayed_findings),
             "findings_by_severity": findings_by_severity,
             "findings_by_rule": findings_by_rule,
         },
-        "warnings": warnings,
         "findings": [asdict(finding) for finding in displayed_findings],
+        "warnings": warnings,
         "ignored": ignored,
         "skipped": skipped,
-        "excluded_directories": sorted(set(excluded_directories)),
+        "excluded_directories": excluded_counts,
         "long_lines_skipped": long_lines,
     }
     if list_files:
         result["scanned_files"] = scanned_files
+        result["excluded_directory_paths"] = excluded_paths
     return result
 
 
@@ -1178,11 +1260,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+def _entrypoint() -> int:
     try:
-        raise SystemExit(main())
+        return main()
     except KeyboardInterrupt:
-        raise SystemExit(3)
+        return 3
     except Exception as exc:
         print("error: unexpected scanner failure: {}".format(exc), file=sys.stderr)
-        raise SystemExit(3)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(_entrypoint())

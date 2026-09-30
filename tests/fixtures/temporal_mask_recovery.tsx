@@ -1,0 +1,14 @@
+const escaped = (value) => value.replace(/'/g, "&#39;");
+const birthday = new Date("2026-03-08");
+const reportDay = created.toISOString().split("T")[0];
+export const reminder = () => <p>Don't forget</p>;
+const localLabel = created.toLocaleDateString("en-US", timeZone ? { timeZone } : undefined);
+const oneDay = ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const millisecondsPerDay = MS_PER_DAY = 86400000;
+const dayInMilliseconds = DAY_IN_MS = 86400000;
+const dayMilliseconds = DAY_MS = 86400000;
+const numberedDay = DAY1 = 86400000;
+const twoTermDay = now.getTime() + 86400 * 1000;
+const amount = order.amountDue.toLocaleString("en-US", { style: "currency", currency: "USD" });
+const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const template = `${new Date("2026-04-01")}`;

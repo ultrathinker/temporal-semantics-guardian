@@ -1,6 +1,9 @@
 import io
 import json
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -132,22 +135,35 @@ class TemporalScanTests(unittest.TestCase):
             list_files=True,
         )
         findings = result["findings"]
-        rules = {finding["rule"] for finding in findings}
+        actual = [(finding["path"], finding["line"], finding["rule"]) for finding in findings]
+        expected = [
+            ("tests/fixtures/temporal_mask_recovery.tsx", 2, "JS001"),
+            ("tests/fixtures/temporal_mask_recovery.tsx", 3, "JS003"),
+            ("tests/fixtures/temporal_mask_recovery.tsx", 6, "JS005"),
+            ("tests/fixtures/temporal_mask_recovery.tsx", 7, "JS005"),
+            ("tests/fixtures/temporal_mask_recovery.tsx", 8, "JS005"),
+            ("tests/fixtures/temporal_mask_recovery.tsx", 9, "JS005"),
+            ("tests/fixtures/temporal_mask_recovery.tsx", 10, "JS005"),
+            ("tests/fixtures/temporal_mask_recovery.tsx", 11, "JS005"),
+            ("tests/fixtures/temporal_must_flag.py", 4, "PY001"),
+            ("tests/fixtures/temporal_must_flag.py", 5, "PY002"),
+            ("tests/fixtures/temporal_must_flag.py", 6, "PY003"),
+            ("tests/fixtures/temporal_must_flag.py", 8, "PY001"),
+            ("tests/fixtures/temporal_must_flag.py", 9, "PY002"),
+            ("tests/fixtures/temporal_must_flag.ts", 1, "JS001"),
+            ("tests/fixtures/temporal_must_flag.ts", 2, "JS002"),
+            ("tests/fixtures/temporal_must_flag.ts", 4, "JS003"),
+            ("tests/fixtures/temporal_must_flag.ts", 6, "JS005"),
+            ("tests/fixtures/temporal_must_flag.py", 7, "PY007"),
+            ("tests/fixtures/temporal_must_flag.ts", 7, "JS004"),
+        ]
 
-        self.assertEqual(result["summary"]["files_scanned"], 2)
-        self.assertTrue(result["scanned_files"])
+        self.assertEqual(result["summary"]["files_scanned"], 4)
+        self.assertEqual(actual, expected)
         self.assertTrue(all(finding["context"] == "test" for finding in findings))
-        self.assertEqual(
-            rules,
-            {"JS001", "JS002", "JS003", "JS004", "JS005", "PY001", "PY002", "PY003", "PY007"},
-        )
-        self.assertFalse(
-            any(
-                finding["path"].endswith("must_flag.py")
-                and finding["line"] in {9, 10, 11}
-                and finding["rule"] == "PY007"
-                for finding in findings
-            )
+        self.assertNotIn(
+            "tests/fixtures/temporal_must_stay_quiet.ts",
+            {finding["path"] for finding in findings},
         )
 
     def test_json_is_findings_first_and_truncation_is_explicit(self):
@@ -171,7 +187,56 @@ class TemporalScanTests(unittest.TestCase):
         self.assertGreater(payload["summary"]["total_findings"], 2)
         self.assertTrue(any("truncated" in warning for warning in payload["warnings"]))
         self.assertNotIn("scanned_files", payload)
+        self.assertLess(list(payload).index("findings"), list(payload).index("warnings"))
         self.assertLess(list(payload).index("findings"), list(payload).index("skipped"))
+
+    def test_excluded_directories_are_aggregated_and_paths_are_opt_in(self):
+        def fake_iter(root, targets, excluded):
+            excluded.extend(
+                [
+                    "packages/one/node_modules",
+                    "packages/two/node_modules",
+                    "packages/one/dist",
+                    ".git",
+                ]
+            )
+            yield PROJECT_ROOT / "scripts" / "temporal_scan.py"
+
+        with patch.object(temporal_scan, "iter_source_files", fake_iter):
+            result = temporal_scan.scan(PROJECT_ROOT, ["."], max_findings=0)
+            listed = temporal_scan.scan(
+                PROJECT_ROOT, ["."], max_findings=0, list_files=True
+            )
+
+        self.assertEqual(
+            result["excluded_directories"],
+            {".git": 1, "dist": 1, "node_modules": 2},
+        )
+        self.assertNotIn("excluded_directory_paths", result)
+        self.assertEqual(
+            listed["excluded_directory_paths"],
+            [".git", "packages/one/dist", "packages/one/node_modules", "packages/two/node_modules"],
+        )
+        self.assertIn("node_modules x2", result["warnings"][0])
+        self.assertNotIn("packages/one", result["warnings"][0])
+        self.assertNotIn(".git", result["warnings"][0])
+
+    def test_locale_heuristics_require_temporal_evidence(self):
+        source = "\n".join(
+            [
+                "const amount = order.amountDue.toLocaleString(\"en-US\", { style: \"currency\" });",
+                "const count = attendees.length.toLocaleString();",
+                "const display = created.toLocaleString();",
+                "const shorthand = created.toLocaleDateString(\"en-US\", timeZone && { timeZone });",
+                "const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;",
+            ]
+        )
+        findings = temporal_scan.scan_text(source, "src/display.ts")
+
+        self.assertEqual(
+            [(finding.line, finding.rule) for finding in findings],
+            [(3, "JS004")],
+        )
 
     def test_fail_on_threshold_uses_full_summary(self):
         warning_output = io.StringIO()
@@ -216,8 +281,17 @@ class TemporalScanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             temporal_scan.scan(PROJECT_ROOT, [".."])
 
-        root_result = temporal_scan.scan(PROJECT_ROOT, ["."])
-        self.assertIn(".git", root_result["excluded_directories"])
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as scratch_root:
+            scratch = Path(scratch_root)
+            (scratch / ".git").mkdir()
+            (scratch / "sample.py").write_text(
+                "value = datetime.utcnow()\n", encoding="utf-8"
+            )
+            root_result = temporal_scan.scan(scratch, ["."])
+            self.assertEqual(root_result["excluded_directories"], {".git": 1})
+            self.assertFalse(
+                any("Excluded directories" in warning for warning in root_result["warnings"])
+            )
 
         capped = temporal_scan.scan(
             PROJECT_ROOT,
@@ -240,6 +314,99 @@ class TemporalScanTests(unittest.TestCase):
         self.assertEqual(result["findings"], [])
         self.assertEqual(result["long_lines_skipped"][0]["count"], 1)
         self.assertTrue(any("2000" in warning for warning in result["warnings"]))
+
+    def test_masker_preserves_code_after_quotes_and_masks_literals(self):
+        source = "\n".join(
+            [
+                "const escaped = (value) => value.replace(/'/g, \"&#39;\");",
+                'const birthday = new Date("2026-03-08");',
+                "export const reminder = () => <p>Don't forget</p>;",
+                'const text = "// new Date(\\\"2026-03-08\\\")";',
+                "const template = `${new Date(\"2026-04-01\")}`;",
+            ]
+        )
+        findings = temporal_scan.scan_text(source, "src/reminder.tsx")
+
+        self.assertEqual(
+            [(finding.line, finding.rule) for finding in findings],
+            [(2, "JS001")],
+        )
+
+        python_source = "value = '# datetime.utcnow()'\n# datetime.utcnow()\nvalue = datetime.utcnow()"
+        python_findings = temporal_scan.scan_text(python_source, "src/value.py")
+        self.assertEqual(
+            [(finding.line, finding.rule) for finding in python_findings],
+            [(3, "PY002")],
+        )
+
+    def test_call_and_line_bounds_keep_evidence_stable(self):
+        unclosed = (
+            "created.toLocaleDateString("
+            + ("x" * temporal_scan.MAX_CALL_SCAN_CHARS)
+            + ")"
+        )
+        self.assertIsNone(temporal_scan._balanced_call(unclosed, unclosed.index("(")))
+
+        for separator in ("\f", "\u2028", "\u0085", "\r"):
+            source = "prefix = 1" + separator + "value = datetime.now()"
+            findings = temporal_scan.scan_text(source, "src/value.py")
+            self.assertEqual(len(findings), 1)
+            self.assertIn("datetime.now()", findings[0].evidence)
+
+    def test_python_today_references_and_timezone_removal_are_described(self):
+        source = "\n".join(
+            [
+                "today = datetime.today()",
+                "factory = datetime.utcnow",
+                "stripped = value.replace(tzinfo=None)",
+            ]
+        )
+        findings = temporal_scan.scan_text(source, "src/time.py")
+
+        self.assertEqual(
+            [(finding.line, finding.rule) for finding in findings],
+            [(1, "PY001"), (2, "PY002"), (3, "PY006")],
+        )
+        self.assertIn("rewrites timezone metadata", findings[-1].message)
+
+    def test_entrypoint_and_cli_input_errors_have_distinct_statuses(self):
+        with patch.object(temporal_scan, "main", side_effect=RuntimeError("boom")):
+            with patch.object(sys, "stderr", io.StringIO()) as stderr:
+                self.assertEqual(temporal_scan._entrypoint(), 3)
+                self.assertIn("unexpected scanner failure", stderr.getvalue())
+
+        output = io.StringIO()
+        with patch.object(sys, "stdout", output), patch.object(sys, "stderr", io.StringIO()):
+            code = temporal_scan.main(["--root", str(PROJECT_ROOT / "missing")])
+        self.assertEqual(code, 2)
+
+    def test_real_subprocess_handles_cp1252_pipe(self):
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as scratch_root:
+            scratch = Path(scratch_root)
+            (scratch / "sample.py").write_text(
+                "value = datetime.utcnow()  # caf\u00e9\n", encoding="utf-8"
+            )
+            environment = os.environ.copy()
+            environment["PYTHONIOENCODING"] = "cp1252"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "temporal_scan.py"),
+                    "--root",
+                    str(scratch),
+                    "--format",
+                    "text",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=environment,
+                check=False,
+            )
+
+        output = completed.stdout.decode("utf-8")
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("caf\u00e9", output)
+        self.assertNotIn("Traceback", completed.stderr.decode("utf-8", errors="replace"))
 
     def test_config_schema_bom_path_and_match(self):
         with self.assertRaises(ValueError):
@@ -285,6 +452,14 @@ class TemporalScanTests(unittest.TestCase):
             )
         self.assertEqual(parsed, [])
         self.assertEqual(path, "tests/fixtures/config.json")
+
+        with patch.object(Path, "is_file", return_value=True), patch.object(
+            Path,
+            "read_text",
+            side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"),
+        ):
+            with self.assertRaisesRegex(ValueError, "Config file"):
+                temporal_scan.load_config(PROJECT_ROOT, "tests/fixtures/config.json")
 
     def test_cli_text_handles_cp1252_stdout_and_returns_finding_status(self):
         result = {

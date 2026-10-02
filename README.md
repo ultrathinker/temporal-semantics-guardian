@@ -1,4 +1,7 @@
-# Temporal Semantics Guardian
+# Temporal Semantics Guardian (Claude Code plugin)
+
+[![ci](https://github.com/ultrathinker/temporal-semantics-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/ultrathinker/temporal-semantics-guardian/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Temporal Semantics Guardian is a read-only Claude Code plugin for finding date and time bugs before they become
 booking failures, shifted deadlines, incorrect invoices, or reports that change at midnight. It combines a small,
@@ -23,9 +26,21 @@ The review is intentionally quiet about code that already makes its zone and mea
 a prompt for inspection, not proof of a defect. The final review should say when a pattern is safe because the
 business meaning and the conversion zone are documented.
 
+## Install
+
+In Claude Code:
+
+~~~text
+/plugin marketplace add ultrathinker/temporal-semantics-guardian
+/plugin install temporal-semantics-guardian@temporal-semantics-guardian
+~~~
+
+Then restart the session (or run `/reload-plugins`). You need Python 3.9 or newer on your PATH (as `python` or
+`python3`); without it the review still runs, just without the scanner.
+
 ## Use it
 
-Load the plugin for a local Claude Code session:
+To try the plugin without installing it, load it for one local Claude Code session:
 
 ~~~text
 claude --plugin-dir /path/to/temporal-semantics-guardian

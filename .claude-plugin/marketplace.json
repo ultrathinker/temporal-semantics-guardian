@@ -1,0 +1,14 @@
+{
+  "name": "temporal-semantics-guardian",
+  "owner": {
+    "name": "ultrathinker"
+  },
+  "description": "Find date and time bugs in JavaScript, TypeScript and Python before they ship.",
+  "plugins": [
+    {
+      "name": "temporal-semantics-guardian",
+      "source": ".",
+      "description": "Review code for ambiguous date and time meaning, time zone boundary bugs and daylight-saving unsafe arithmetic, with a small read-only scanner and a Claude-led review."
+    }
+  ]
+}
